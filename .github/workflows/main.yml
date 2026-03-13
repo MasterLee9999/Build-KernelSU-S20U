@@ -1,0 +1,67 @@
+name: Build KernelSU for SM-G988N (S20 Ultra)
+
+on:
+  workflow_dispatch: # Cho phép bạn bấm nút chạy thủ công
+
+env:
+  # Cấu hình mã nguồn (Source sạch nhánh android-12)
+  KERNEL_SOURCE: https://github.com/bggRGjQaUbCoE/android_kernel_samsung_sm8250-mohammad92
+  KERNEL_BRANCH: android-12
+  
+  # Mã cấu hình cho máy bạn (thường là vendor/z3q_defconfig hoặc vendor/kona_defconfig)
+  # Nếu build lỗi, bạn có thể đổi thành vendor/kona_defconfig
+  KERNEL_DEFCONFIG: vendor/z3q_defconfig
+  
+  TARGET_ARCH: arm64
+  KERNEL_FILE: Image # File xuất ra cuối cùng của Samsung thường là Image hoặc Image.gz
+
+jobs:
+  build-kernel:
+    name: Build Kernel
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Kiểm tra môi trường
+      uses: actions/checkout@v4
+
+    - name: Cài đặt các gói phụ thuộc (Dependencies)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
+
+    - name: Tải Toolchain (Trình biên dịch Clang)
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/toolchain
+        cd $GITHUB_WORKSPACE/toolchain
+        # Sử dụng Proton-Clang (rất tối ưu cho Kernel 4.19 Snapdragon)
+        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
+
+    - name: Tải mã nguồn Kernel
+      run: |
+        git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_BRANCH }} android-kernel
+
+    - name: Tích hợp KernelSU
+      run: |
+        cd $GITHUB_WORKSPACE/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+        
+        # Thêm các cờ bắt buộc cho KernelSU vào file defconfig để tránh lỗi
+        echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+        echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+        echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
+
+    - name: Tiến hành Biên dịch (Build Kernel)
+      run: |
+        cd $GITHUB_WORKSPACE/android-kernel
+        export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
+        
+        # Lệnh build chính thức
+        make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- ${{ env.KERNEL_DEFCONFIG }}
+        
+        make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+    - name: Đóng gói và Tải lên (Upload Artifact)
+      uses: actions/upload-artifact@v4
+      with:
+        name: S20Ultra-KernelSU-${{ github.run_id }}
+        path: android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
