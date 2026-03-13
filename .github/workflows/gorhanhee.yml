@@ -4,10 +4,15 @@ on:
   workflow_dispatch:
 
 env:
-  # Đã chuyển sang mã nguồn của GoRhanHee
+  # Sử dụng kho mã nguồn đã mod sẵn KernelSU Next và SuSFS
   KERNEL_SOURCE: https://github.com/GoRhanHee/kernel_samsung_sm8250
+  
+  # Đặt mặc định nhánh master, nếu luồng báo lỗi tải source thì bạn sửa chữ 'master' thành 'main' hoặc tên nhánh Android mà máy bạn đang chạy
   KERNEL_BRANCH: master
-  KERNEL_DEFCONFIG: vendor/z3q_defconfig
+  
+  # Mã thiết bị S20 Ultra
+  KERNEL_DEFCONFIG: z3q_defconfig
+  
   TARGET_ARCH: arm64
   KERNEL_FILE: Image
 
@@ -35,21 +40,12 @@ jobs:
       run: |
         git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_BRANCH }} android-kernel
 
-    - name: Tích hợp KernelSU bản mới nhất
-      run: |
-        cd $GITHUB_WORKSPACE/android-kernel
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
-        
-        # Kích hoạt kprobes
-        echo "CONFIG_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-        echo "CONFIG_HAVE_KPROBES=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-        echo "CONFIG_KPROBE_EVENTS=y" >> arch/arm64/configs/${{ env.KERNEL_DEFCONFIG }}
-
     - name: Biên dịch Kernel
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
         
+        # Chỉ truyền tên defconfig thay vì đường dẫn dài để tránh lỗi file not found
         make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- ${{ env.KERNEL_DEFCONFIG }}
         make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
