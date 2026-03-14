@@ -1,12 +1,10 @@
-name: Build KernelSU S20U (GoRhanHee Final)
+name: Build KernelSU S20U (GoRhanHee Auto)
 
 on:
   workflow_dispatch:
 
 env:
   KERNEL_SOURCE: https://github.com/GoRhanHee/kernel_samsung_sm8250
-  # Đã sửa tên nhánh chuẩn xác thành z3q theo đúng kho của tác giả
-  KERNEL_BRANCH: z3q
   KERNEL_DEFCONFIG: vendor/z3q_defconfig
   TARGET_ARCH: arm64
   KERNEL_FILE: Image
@@ -31,9 +29,9 @@ jobs:
         cd $GITHUB_WORKSPACE/toolchain
         git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-    - name: Tải mã nguồn Kernel GoRhanHee (Nhánh z3q)
+    - name: Tải mã nguồn Kernel (Tự động lấy nhánh chính)
       run: |
-        git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_BRANCH }} android-kernel
+        git clone --depth=1 ${{ env.KERNEL_SOURCE }} android-kernel
 
     - name: Biên dịch Kernel
       run: |
@@ -46,5 +44,5 @@ jobs:
     - name: Tải file Image lên Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: S20Ultra-GoRhanHee-z3q-${{ github.run_id }}
+        name: S20Ultra-GoRhanHee-Auto-${{ github.run_id }}
         path: android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
