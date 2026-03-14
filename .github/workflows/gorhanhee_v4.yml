@@ -53,9 +53,30 @@ jobs:
     - name: Tích hợp KernelSU Next
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
-        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/main/kernel/setup.sh" | bash -
-        echo "=== KernelSU files ==="
+
+        # Clone KernelSU Next
+        git clone --depth=1 \
+          https://github.com/KernelSU-Next/KernelSU-Next.git \
+          /tmp/ksu-next
+
+        # Copy thư mục kernel vào drivers/kernelsu
+        cp -r /tmp/ksu-next/kernel drivers/kernelsu
+
+        # Kiểm tra Kconfig có tồn tại không
+        if [ ! -f drivers/kernelsu/Kconfig ]; then
+          echo "❌ Không có Kconfig! Nội dung /tmp/ksu-next/kernel:"
+          ls /tmp/ksu-next/kernel/
+          exit 1
+        fi
+        echo "✅ KernelSU tích hợp thành công!"
         ls drivers/kernelsu/
+
+        # Đảm bảo drivers/Kconfig có dòng include kernelsu
+        grep -q "kernelsu/Kconfig" drivers/Kconfig || \
+          echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
+
+        echo "=== Dòng kernelsu trong drivers/Kconfig ==="
+        grep -n "kernelsu" drivers/Kconfig
 
     - name: Setup ccache
       uses: hendrikmuhs/ccache-action@v1.2
@@ -75,7 +96,7 @@ jobs:
           DEFCONFIG=$(find arch/arm64/configs -name "*kona*defconfig" | head -1)
         fi
         if [ -z "$DEFCONFIG" ]; then
-          echo "❌ Không tìm thấy defconfig!"
+          echo "❌ Không tìm thấy defconfig! Danh sách:"
           ls arch/arm64/configs/
           exit 1
         fi
@@ -106,6 +127,7 @@ jobs:
           echo "========= LỖI ========="
           grep -n "error:\|fatal error:\|undefined reference\|cannot find" build.log \
             | grep -iv "Werror" | head -50
+          echo "========= 30 DÒNG CUỐI ========="
           tail -30 build.log
           exit 1
         fi
