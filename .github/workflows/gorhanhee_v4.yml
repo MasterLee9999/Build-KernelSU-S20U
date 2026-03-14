@@ -1,4 +1,4 @@
-name: Build KernelSU S20U (GoRhanHee V.I.P)
+name: Build KernelSU S20U (GoRhanHee Bạo Lực)
 
 on:
   workflow_dispatch:
@@ -6,7 +6,6 @@ on:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   KERNEL_SOURCE: https://github.com/GoRhanHee/kernel_samsung_sm8250
-  KERNEL_DEFCONFIG: z3q_kor_singlex_defconfig
   TARGET_ARCH: arm64
   KERNEL_FILE: Image
 
@@ -19,7 +18,7 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: 1. Cài đặt thư viện siêu tốc
+    - name: 1. Cài đặt thư viện 
       run: |
         sudo apt-get update
         sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
@@ -33,30 +32,27 @@ jobs:
       run: |
         git clone --depth=1 ${{ env.KERNEL_SOURCE }} $GITHUB_WORKSPACE/android-kernel
 
-    - name: 4. Radar dò tìm & Nạp File Cấu Hình
+    - name: 4. Lôi cổ file cấu hình & Nạp
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
-        
-        echo "========================================================="
-        echo "DANH SÁCH CÁC FILE CẤU HÌNH S20 CÓ TRONG KHO NÀY:"
-        find arch/arm64/configs -name "*z3q*" -o -name "*g988*"
-        echo "========================================================="
-        
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
         
-        echo "=> Đang thử nạp file cấu hình..."
-        make O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- ${{ env.KERNEL_DEFCONFIG }} || make O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- vendor/${{ env.KERNEL_DEFCONFIG }}
+        # Bạo lực: Copy thẳng file cấu hình ra ngoài cho make dễ nhìn thấy
+        cp arch/arm64/configs/vendor/z3q_kor_singlex_defconfig arch/arm64/configs/z3q_kor_singlex_defconfig
+        
+        echo "=> Đang nạp cấu hình..."
+        make O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- z3q_kor_singlex_defconfig
 
     - name: 5. Biên dịch Kernel chính thức
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
         
-        echo "=> Tiến hành Build (Sẽ mất 15-30 phút)..."
+        echo "=> Tiến hành Build (Sẽ mất khoảng 15-30 phút)..."
         make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
     - name: 6. Tải file Image lên Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: S20Ultra-GoRhanHee-VIP-${{ github.run_id }}
-        path: android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
+        name: S20Ultra-GoRhanHee-XongPhim-${{ github.run_id }}
+        path: ${{ github.workspace }}/android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
