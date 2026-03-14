@@ -50,6 +50,13 @@ jobs:
         echo "=== Commit hiện tại ==="
         git log --oneline -3
 
+    - name: Tích hợp KernelSU Next
+      run: |
+        cd $GITHUB_WORKSPACE/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/main/kernel/setup.sh" | bash -
+        echo "=== KernelSU files ==="
+        ls drivers/kernelsu/
+
     - name: Setup ccache
       uses: hendrikmuhs/ccache-action@v1.2
       with:
@@ -63,12 +70,14 @@ jobs:
         export USE_CCACHE=1
         export CCACHE_EXEC=$(which ccache)
 
-        # Tìm defconfig
         DEFCONFIG=$(find arch/arm64/configs -name "*z3q*defconfig" | head -1)
         if [ -z "$DEFCONFIG" ]; then
-          echo "Danh sách defconfig có sẵn:"
-          ls arch/arm64/configs/ | grep -i "z3\|g988\|kona\|s20"
           DEFCONFIG=$(find arch/arm64/configs -name "*kona*defconfig" | head -1)
+        fi
+        if [ -z "$DEFCONFIG" ]; then
+          echo "❌ Không tìm thấy defconfig!"
+          ls arch/arm64/configs/
+          exit 1
         fi
         echo ">>> Dùng defconfig: $DEFCONFIG"
         DEFCONFIG_NAME=$(basename $DEFCONFIG)
@@ -85,24 +94,36 @@ jobs:
           KCFLAGS="-Wno-error"
         )
 
-        # Tắt DEBUG_INFO để nhanh hơn
         make "${MAKE_ARGS[@]}" $DEFCONFIG_NAME
+
         scripts/config --file out/.config \
           --disable DEBUG_INFO \
           --enable DEBUG_INFO_NONE 2>/dev/null || true
 
-        # Build
         make "${MAKE_ARGS[@]}" 2>&1 | tee build.log
 
-        # Kiểm tra
         if [ ! -f out/arch/arm64/boot/Image ]; then
-          echo "❌ THẤT BẠI! Lỗi:"
-          grep "error:" build.log | grep -v Werror | tail -30
+          echo "========= LỖI ========="
+          grep -n "error:\|fatal error:\|undefined reference\|cannot find" build.log \
+            | grep -iv "Werror" | head -50
+          tail -30 build.log
           exit 1
         fi
-        echo "✅ Thành công!"
+        echo "✅ Build thành công!"
+        ls -lh out/arch/arm64/boot/
+
+    - name: Debug - Lỗi chi tiết
+      if: failure()
+      run: |
+        echo "===== LỖI ====="
+        grep -n "error:\|fatal error:\|undefined\|cannot" \
+          $GITHUB_WORKSPACE/android-kernel/build.log \
+          | grep -iv "Werror" | head -50
+        echo "===== 50 DÒNG CUỐI ====="
+        tail -50 $GITHUB_WORKSPACE/android-kernel/build.log
 
     - name: Đóng gói AnyKernel3
+      if: success()
       run: |
         git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
         cp android-kernel/out/arch/arm64/boot/Image AnyKernel3/
