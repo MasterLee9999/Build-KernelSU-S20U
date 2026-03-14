@@ -1,4 +1,4 @@
-name: Build KernelSU S20U (GoRhanHee Bạo Lực)
+name: Build KernelSU S20U (GoRhanHee A.I Auto)
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ jobs:
     - name: Checkout Repo
       uses: actions/checkout@v4
 
-    - name: 1. Cài đặt thư viện 
+    - name: 1. Cài đặt thư viện siêu tốc
       run: |
         sudo apt-get update
         sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
@@ -32,23 +32,43 @@ jobs:
       run: |
         git clone --depth=1 ${{ env.KERNEL_SOURCE }} $GITHUB_WORKSPACE/android-kernel
 
-    - name: 4. Lôi cổ file cấu hình & Nạp
+    - name: 4. A.I Dò tìm & Nạp Cấu Hình Tự Động
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
         
-        # Bạo lực: Copy thẳng file cấu hình ra ngoài cho make dễ nhìn thấy
-        cp arch/arm64/configs/vendor/z3q_kor_singlex_defconfig arch/arm64/configs/z3q_kor_singlex_defconfig
+        echo "=> 1. Đang quét lùng sục file cấu hình S20 Ultra (z3q / g988 / kona)..."
         
-        echo "=> Đang nạp cấu hình..."
-        make O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- z3q_kor_singlex_defconfig
+        # Lùng sục ưu tiên file của bản Hàn (kor) trước
+        FOUND_CONF=$(find arch/arm64/configs -type f -name "*z3q*kor*defconfig*" | head -n 1)
+        
+        # Nếu không có, gom hết các file z3q, g988 hoặc kona khác
+        if [ -z "$FOUND_CONF" ]; then
+          FOUND_CONF=$(find arch/arm64/configs -type f -name "*z3q*defconfig*" -o -name "*g988*defconfig*" -o -name "*kona*defconfig*" | head -n 1)
+        fi
+        
+        # Nếu quét nát kho mà vẫn không ra cái nào (hiếm khi xảy ra)
+        if [ -z "$FOUND_CONF" ]; then
+          echo "=> ❌ LỖI: Không tìm thấy file defconfig nào liên quan đến S20!"
+          echo "=> Xuất toàn bộ danh sách để kiểm tra thủ công:"
+          ls -R arch/arm64/configs/
+          exit 1
+        fi
+        
+        echo "=> 2. ĐÃ TÓM ĐƯỢC FILE TẠI: $FOUND_CONF"
+        
+        # Đổi tên file thành my_s20_defconfig và vứt ra ngoài cùng để make nhận diện ngay lập tức
+        cp "$FOUND_CONF" arch/arm64/configs/my_s20_defconfig
+        
+        echo "=> 3. Đang nạp cấu hình..."
+        make O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- my_s20_defconfig
 
     - name: 5. Biên dịch Kernel chính thức
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
         
-        echo "=> Tiến hành Build (Sẽ mất khoảng 15-30 phút)..."
+        echo "=> Tiến hành Build (Sẽ mất khoảng 15-30 phút, đi pha cafe thôi)..."
         make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
 
     - name: 6. Tải file Image lên Artifacts
