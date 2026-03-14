@@ -1,12 +1,12 @@
-name: Build KernelSU S20U (GoRhanHee V2)
+name: Build KernelSU S20U (GoRhanHee Final)
 
 on:
   workflow_dispatch:
 
 env:
-  # Nguồn gốc đã tích hợp sẵn KSU
   KERNEL_SOURCE: https://github.com/GoRhanHee/kernel_samsung_sm8250
-  KERNEL_BRANCH: master
+  # Đã sửa tên nhánh chuẩn xác thành z3q theo đúng kho của tác giả
+  KERNEL_BRANCH: z3q
   KERNEL_DEFCONFIG: vendor/z3q_defconfig
   TARGET_ARCH: arm64
   KERNEL_FILE: Image
@@ -14,8 +14,7 @@ env:
 jobs:
   build-kernel:
     name: Build Kernel
-    # Ép dùng Ubuntu 22.04 để không bị kẹt Waiting for runner
-    runs-on: ubuntu-22.04 
+    runs-on: ubuntu-22.04
     
     steps:
     - name: Checkout Repo
@@ -32,7 +31,7 @@ jobs:
         cd $GITHUB_WORKSPACE/toolchain
         git clone --depth=1 https://github.com/kdrag0n/proton-clang.git clang
 
-    - name: Tải mã nguồn Kernel GoRhanHee
+    - name: Tải mã nguồn Kernel GoRhanHee (Nhánh z3q)
       run: |
         git clone --depth=1 ${{ env.KERNEL_SOURCE }} -b ${{ env.KERNEL_BRANCH }} android-kernel
 
@@ -47,5 +46,5 @@ jobs:
     - name: Tải file Image lên Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: S20Ultra-GoRhanHee-V2-${{ github.run_id }}
+        name: S20Ultra-GoRhanHee-z3q-${{ github.run_id }}
         path: android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
