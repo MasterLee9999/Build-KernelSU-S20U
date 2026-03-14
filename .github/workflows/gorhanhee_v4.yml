@@ -47,6 +47,8 @@ jobs:
           ${{ env.KERNEL_SOURCE }} \
           $GITHUB_WORKSPACE/android-kernel
         cd $GITHUB_WORKSPACE/android-kernel
+        echo "=== Branch đang dùng ==="
+        git branch
         echo "=== Commit hiện tại ==="
         git log --oneline -3
 
@@ -54,15 +56,12 @@ jobs:
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
 
-        # Clone KernelSU Next
         git clone --depth=1 \
           https://github.com/KernelSU-Next/KernelSU-Next.git \
           /tmp/ksu-next
 
-        # Copy thư mục kernel vào drivers/kernelsu
         cp -r /tmp/ksu-next/kernel drivers/kernelsu
 
-        # Kiểm tra Kconfig có tồn tại không
         if [ ! -f drivers/kernelsu/Kconfig ]; then
           echo "❌ Không có Kconfig! Nội dung /tmp/ksu-next/kernel:"
           ls /tmp/ksu-next/kernel/
@@ -71,11 +70,10 @@ jobs:
         echo "✅ KernelSU tích hợp thành công!"
         ls drivers/kernelsu/
 
-        # Đảm bảo drivers/Kconfig có dòng include kernelsu
         grep -q "kernelsu/Kconfig" drivers/Kconfig || \
           echo 'source "drivers/kernelsu/Kconfig"' >> drivers/Kconfig
 
-        echo "=== Dòng kernelsu trong drivers/Kconfig ==="
+        echo "=== Verify ==="
         grep -n "kernelsu" drivers/Kconfig
 
     - name: Setup ccache
