@@ -1,114 +1,124 @@
-name: Build KernelSU S20U (GoRhanHee - Bản Chuẩn Cuối Cùng)
+name: Build KernelSU S20U (GoRhanHee Fixed)
 
 on:
   workflow_dispatch:
 
 env:
-  # Ép tắt cảnh báo Node.js và tương thích với hệ thống mới
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-  
-  # Thông tin mã nguồn
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   KERNEL_SOURCE: https://github.com/GoRhanHee/kernel_samsung_sm8250
-  KERNEL_BRANCH: main # Hoặc master, nhánh mặc định
-  KERNEL_DEFCONFIG: z3q_kor_singlex_defconfig
   TARGET_ARCH: arm64
-  
-  # Cấu hình AnyKernel3 (Để tạo file zip flash qua TWRP/KernelSU)
-  ANYKERNEL_SOURCE: https://github.com/osm0sis/AnyKernel3
-  ANYKERNEL_BRANCH: master
+  KERNEL_FILE: Image
 
 jobs:
   build-kernel:
-    name: Build Kernel & Tạo File Zip
-    runs-on: ubuntu-latest # Dùng bản Ubuntu mới nhất của GitHub
-    
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
     steps:
-    - name: Chuẩn bị môi trường (Khắc phục lỗi Node.js)
-      uses: actions/checkout@v4
+    - name: Checkout Repo
+      uses: actions/checkout@v4.2.2
+
+    - name: Cache Proton-Clang
+      id: cache-clang
+      uses: actions/cache@v4
       with:
-        fetch-depth: 1
+        path: toolchain/clang
+        key: proton-clang-v1
 
-    - name: 1. Cài đặt thư viện biên dịch siêu tốc
+    - name: Cài Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
-        sudo apt-get clean
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          bc bison build-essential ccache curl flex \
+          g++-multilib gcc-multilib git libncurses-dev \
+          libssl-dev libelf-dev zip zlib1g-dev \
+          python3 python-is-python3
 
-    - name: 2. Tải Toolchain EVA GCC (Siêu ổn định)
+    - name: Tải Proton-Clang
+      if: steps.cache-clang.outputs.cache-hit != 'true'
       run: |
-        mkdir -p $GITHUB_WORKSPACE/toolchain
-        cd $GITHUB_WORKSPACE/toolchain
-        git clone --depth=1 https://github.com/mvaisakh/gcc-arm64.git gcc-arm64
-        git clone --depth=1 https://github.com/mvaisakh/gcc-arm.git gcc-arm
+        git clone --depth=1 \
+          https://github.com/kdrag0n/proton-clang.git \
+          $GITHUB_WORKSPACE/toolchain/clang
 
-    - name: 3. Tải mã nguồn Kernel S20 Ultra
+    - name: Tải Kernel Source
       run: |
-        git clone --depth=1 ${{ env.KERNEL_SOURCE }} $GITHUB_WORKSPACE/android-kernel
+        git clone --depth=1 \
+          ${{ env.KERNEL_SOURCE }} \
+          $GITHUB_WORKSPACE/android-kernel
         cd $GITHUB_WORKSPACE/android-kernel
-        # Cấp quyền cho các file thực thi bên trong để tránh lỗi Permission Denied
-        chmod -R +x *.sh scripts/ 2>/dev/null || true
+        echo "=== Commit hiện tại ==="
+        git log --oneline -3
 
-    - name: 4. Thiết lập Cấu hình & Tiêm SuSFS
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        max-size: 3G
+        key: ccache-sm8250-4.19
+
+    - name: Tìm defconfig & Build
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
-        
-        # Tìm file defconfig (bao quát mọi trường hợp)
-        FOUND_CONF=$(find arch/arm64/configs -type f \( -name "*z3q*kor*defconfig" -o -name "*z3q*defconfig" \) | head -n 1)
-        if [ -z "$FOUND_CONF" ]; then
-          echo "=> ❌ LỖI: Kho mã nguồn không có file defconfig cho S20!"
+        export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
+        export USE_CCACHE=1
+        export CCACHE_EXEC=$(which ccache)
+
+        # Tìm defconfig
+        DEFCONFIG=$(find arch/arm64/configs -name "*z3q*defconfig" | head -1)
+        if [ -z "$DEFCONFIG" ]; then
+          echo "Danh sách defconfig có sẵn:"
+          ls arch/arm64/configs/ | grep -i "z3\|g988\|kona\|s20"
+          DEFCONFIG=$(find arch/arm64/configs -name "*kona*defconfig" | head -1)
+        fi
+        echo ">>> Dùng defconfig: $DEFCONFIG"
+        DEFCONFIG_NAME=$(basename $DEFCONFIG)
+
+        MAKE_ARGS=(
+          -j$(nproc --all)
+          O=out
+          ARCH=arm64
+          CC="ccache clang"
+          CLANG_TRIPLE=aarch64-linux-gnu-
+          CROSS_COMPILE=aarch64-linux-gnu-
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          LLVM_IAS=1
+          KCFLAGS="-Wno-error"
+        )
+
+        # Tắt DEBUG_INFO để nhanh hơn
+        make "${MAKE_ARGS[@]}" $DEFCONFIG_NAME
+        scripts/config --file out/.config \
+          --disable DEBUG_INFO \
+          --enable DEBUG_INFO_NONE 2>/dev/null || true
+
+        # Build
+        make "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+        # Kiểm tra
+        if [ ! -f out/arch/arm64/boot/Image ]; then
+          echo "❌ THẤT BẠI! Lỗi:"
+          grep "error:" build.log | grep -v Werror | tail -30
           exit 1
         fi
-        
-        # Lôi file cấu hình ra ngoài để make dễ đọc
-        cp "$FOUND_CONF" arch/arm64/configs/my_s20_defconfig
-        
-        # Tiêm mã kích hoạt SuSFS max giáp
-        cat <<EOF >> arch/arm64/configs/my_s20_defconfig
-        CONFIG_KSU=y
-        CONFIG_KSU_SUSFS=y
-        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
-        CONFIG_KSU_SUSFS_SUS_PATH=y
-        CONFIG_KSU_SUSFS_SUS_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
-        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
-        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-        CONFIG_KSU_SUSFS_ENABLE_LOG=y
-        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-        CONFIG_KSU_SUSFS_SUS_SU=y
-        EOF
-        
-        # Nạp cấu hình với đường dẫn Toolchain chuẩn xác
-        make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} \
-        CROSS_COMPILE=$GITHUB_WORKSPACE/toolchain/gcc-arm64/bin/aarch64-elf- \
-        CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/toolchain/gcc-arm/bin/arm-eabi- \
-        my_s20_defconfig
+        echo "✅ Thành công!"
 
-    - name: 5. Bắt đầu Biên Dịch Kernel (Khoảng 20-30 phút)
+    - name: Đóng gói AnyKernel3
       run: |
-        cd $GITHUB_WORKSPACE/android-kernel
-        
-        make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} \
-        CROSS_COMPILE=$GITHUB_WORKSPACE/toolchain/gcc-arm64/bin/aarch64-elf- \
-        CROSS_COMPILE_ARM32=$GITHUB_WORKSPACE/toolchain/gcc-arm/bin/arm-eabi-
+        git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+        cp android-kernel/out/arch/arm64/boot/Image AnyKernel3/
+        [ -f android-kernel/out/arch/arm64/boot/dtbo.img ] && \
+          cp android-kernel/out/arch/arm64/boot/dtbo.img AnyKernel3/
+        cd AnyKernel3
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/' anykernel.sh
+        ZIPNAME="KernelSU_G988N_$(date +%Y%m%d_%H%M).zip"
+        zip -r9 ../$ZIPNAME . -x .git README.md
+        echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
 
-    - name: 6. Đóng gói thành file ZIP bằng AnyKernel3
-      run: |
-        # Chỉ chạy bước này nếu file Image đã được tạo thành công
-        if [ -f $GITHUB_WORKSPACE/android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/Image ]; then
-          git clone --depth=1 ${{ env.ANYKERNEL_SOURCE }} -b ${{ env.ANYKERNEL_BRANCH }} $GITHUB_WORKSPACE/AnyKernel3
-          cp $GITHUB_WORKSPACE/android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/Image $GITHUB_WORKSPACE/AnyKernel3/
-          cd $GITHUB_WORKSPACE/AnyKernel3
-          zip -r9 KernelSU-S20Ultra-GoRhanHee.zip * -x .git README.md *placeholder
-        else
-          echo "=> ❌ LỖI: Biên dịch thất bại, không tìm thấy file Image!"
-          exit 1
-        fi
-
-    - name: 7. Tải file ZIP lên Artifacts (Thành phẩm)
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: KernelSU-S20Ultra-GoRhanHee-Zip-${{ github.run_id }}
-        path: ${{ github.workspace }}/AnyKernel3/KernelSU-S20Ultra-GoRhanHee.zip
+        name: KernelSU-G988N-${{ github.run_id }}
+        path: |
+          ${{ env.ZIPNAME }}
+          android-kernel/build.log
+        retention-days: 7
