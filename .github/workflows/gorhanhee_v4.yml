@@ -1,7 +1,13 @@
-name: Build KernelSU S20U (GoRhanHee A.I Auto)
+name: Build KernelSU S20U (GoRhanHee SuSFS Edition)
 
 on:
   workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Tạo Release sau khi build?'
+        required: false
+        default: 'false'
+        type: boolean
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -11,68 +17,197 @@ env:
 
 jobs:
   build-kernel:
-    name: Build Kernel
+    name: Build Kernel (4.19 Non-GKI + SuSFS)
     runs-on: ubuntu-22.04
-    
+
     steps:
     - name: Checkout Repo
-      uses: actions/checkout@v4
+      uses: actions/checkout@v4.2.2
 
-    - name: 1. Cài đặt thư viện siêu tốc
+    # Cache Proton-Clang — tiết kiệm ~10 phút từ lần build thứ 2
+    - name: Cache Proton-Clang
+      id: cache-clang
+      uses: actions/cache@v4
+      with:
+        path: toolchain/clang
+        key: proton-clang-${{ runner.os }}-v1
+
+    - name: 1. Cài đặt thư viện
       run: |
-        sudo apt-get update
-        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32readline-dev lib32z1-dev liblz4-tool libncurses-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3 python-is-python3
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends \
+          bc bison build-essential ccache curl flex \
+          g++-multilib gcc-multilib git gnupg gperf \
+          libncurses-dev libssl-dev libelf-dev libdw-dev \
+          libxml2-utils lzop pngcrush rsync pahole \
+          schedtool squashfs-tools zip zlib1g-dev \
+          python3 python-is-python3
 
-    - name: 2. Tải Toolchain (Proton-Clang)
+    - name: 2. Tải Proton-Clang (nếu chưa cache)
+      if: steps.cache-clang.outputs.cache-hit != 'true'
       run: |
-        mkdir -p $GITHUB_WORKSPACE/toolchain
-        git clone --depth=1 https://github.com/kdrag0n/proton-clang.git $GITHUB_WORKSPACE/toolchain/clang
+        git clone --depth=1 \
+          https://github.com/kdrag0n/proton-clang.git \
+          $GITHUB_WORKSPACE/toolchain/clang
 
-    - name: 3. Tải mã nguồn Kernel
+    - name: 3. Tải Kernel Source
       run: |
-        git clone --depth=1 ${{ env.KERNEL_SOURCE }} $GITHUB_WORKSPACE/android-kernel
+        git clone --depth=1 \
+          ${{ env.KERNEL_SOURCE }} \
+          $GITHUB_WORKSPACE/android-kernel
+        cd $GITHUB_WORKSPACE/android-kernel
+        echo "=== Commit mới nhất ==="
+        git log --oneline -3
 
-    - name: 4. A.I Dò tìm & Nạp Cấu Hình Tự Động
+    # ccache giúp build lần 2 nhanh 3-5x
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        max-size: 3G
+        key: ccache-sm8250-4.19-susfs
+
+    - name: 4. Dò tìm defconfig & Tiêm cấu hình SuSFS
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
-        
-        echo "=> 1. Đang quét lùng sục file cấu hình S20 Ultra (z3q / g988 / kona)..."
-        
-        # Lùng sục ưu tiên file của bản Hàn (kor) trước
-        FOUND_CONF=$(find arch/arm64/configs -type f -name "*z3q*kor*defconfig*" | head -n 1)
-        
-        # Nếu không có, gom hết các file z3q, g988 hoặc kona khác
+
+        # Build args dùng chung — đúng cho kernel 4.19
+        MAKE_ARGS=(
+          O=out
+          ARCH=${{ env.TARGET_ARCH }}
+          CC="ccache clang"
+          CLANG_TRIPLE=aarch64-linux-gnu-
+          CROSS_COMPILE=aarch64-linux-gnu-
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          LLVM_IAS=1
+        )
+        # Export để dùng lại ở bước build
+        echo "MAKE_BASE=O=out ARCH=${{ env.TARGET_ARCH }} CC='ccache clang' CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- LLVM_IAS=1" >> $GITHUB_ENV
+
+        echo ">>> Quét tìm defconfig cho z3q / G988N..."
+        FOUND_CONF=$(find arch/arm64/configs -type f \( \
+          -name "*z3q*kor*defconfig*" -o \
+          -name "*z3q*defconfig*" -o \
+          -name "*g988*defconfig*" -o \
+          -name "*kona*defconfig*" \
+        \) | sort | head -n 1)
+
         if [ -z "$FOUND_CONF" ]; then
-          FOUND_CONF=$(find arch/arm64/configs -type f -name "*z3q*defconfig*" -o -name "*g988*defconfig*" -o -name "*kona*defconfig*" | head -n 1)
-        fi
-        
-        # Nếu quét nát kho mà vẫn không ra cái nào (hiếm khi xảy ra)
-        if [ -z "$FOUND_CONF" ]; then
-          echo "=> ❌ LỖI: Không tìm thấy file defconfig nào liên quan đến S20!"
-          echo "=> Xuất toàn bộ danh sách để kiểm tra thủ công:"
-          ls -R arch/arm64/configs/
+          echo "❌ Không tìm thấy defconfig phù hợp!"
+          echo "=== Danh sách defconfig có sẵn ==="
+          ls arch/arm64/configs/
           exit 1
         fi
-        
-        echo "=> 2. ĐÃ TÓM ĐƯỢC FILE TẠI: $FOUND_CONF"
-        
-        # Đổi tên file thành my_s20_defconfig và vứt ra ngoài cùng để make nhận diện ngay lập tức
-        cp "$FOUND_CONF" arch/arm64/configs/my_s20_defconfig
-        
-        echo "=> 3. Đang nạp cấu hình..."
-        make O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- my_s20_defconfig
 
-    - name: 5. Biên dịch Kernel chính thức
+        echo "✅ Tìm thấy: $FOUND_CONF"
+        cp "$FOUND_CONF" arch/arm64/configs/my_s20_defconfig
+
+        echo ">>> Tiêm cấu hình SuSFS + KSU..."
+        # Dùng tab thực sự, không dùng indent để tránh lỗi heredoc
+        cat >> arch/arm64/configs/my_s20_defconfig << 'SUSFS_EOF'
+        CONFIG_KSU=y
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+        CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+        CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+        CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+        CONFIG_KSU_SUSFS_SUS_SU=y
+        # Tắt KProbe — bắt buộc với 4.19 non-GKI Snapdragon
+        CONFIG_KPROBES=n
+        CONFIG_HAVE_KPROBES=n
+        # Tắt DEBUG_INFO để build nhanh hơn ~5 phút
+        CONFIG_DEBUG_INFO=n
+        SUSFS_EOF
+
+        echo ">>> Nạp defconfig..."
+        make "${MAKE_ARGS[@]}" my_s20_defconfig
+
+        # Tắt DEBUG_INFO qua scripts/config cho chắc
+        scripts/config --file out/.config \
+          --disable DEBUG_INFO \
+          --disable DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT \
+          --enable DEBUG_INFO_NONE 2>/dev/null || true
+
+    - name: 5. Biên dịch Kernel
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
         export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
-        
-        echo "=> Tiến hành Build (Sẽ mất khoảng 15-30 phút, đi pha cafe thôi)..."
-        make -j$(nproc --all) O=out ARCH=${{ env.TARGET_ARCH }} CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+        export CCACHE_EXEC=$(which ccache)
+        export USE_CCACHE=1
 
-    - name: 6. Tải file Image lên Artifacts
+        MAKE_ARGS=(
+          -j$(nproc --all)
+          O=out
+          ARCH=${{ env.TARGET_ARCH }}
+          CC="ccache clang"
+          CLANG_TRIPLE=aarch64-linux-gnu-
+          CROSS_COMPILE=aarch64-linux-gnu-
+          CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+          LLVM_IAS=1
+          KCFLAGS="-Wno-error=unused-function -Wno-error=misleading-indentation"
+        )
+
+        echo ">>> Build bắt đầu (khoảng 15-30 phút)..."
+        make "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+        # Kiểm tra output
+        if [ ! -f out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }} ]; then
+          echo "❌ BUILD THẤT BẠI! Lỗi:"
+          grep -i "error:" build.log | grep -v "Werror" | tail -30
+          exit 1
+        fi
+        echo "✅ Build thành công!"
+        ls -lh out/arch/${{ env.TARGET_ARCH }}/boot/
+
+    - name: 6. Đóng gói AnyKernel3
+      run: |
+        git clone --depth=1 \
+          https://github.com/osm0sis/AnyKernel3.git \
+          AnyKernel3
+
+        cp android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }} AnyKernel3/
+
+        # Copy dtbo nếu có
+        [ -f android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/dtbo.img ] && \
+          cp android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/dtbo.img AnyKernel3/
+
+        cd AnyKernel3
+        sed -i 's/do.devicecheck=1/do.devicecheck=0/' anykernel.sh
+
+        ZIPNAME="KernelSU_SuSFS_G988N_$(date +%Y%m%d_%H%M).zip"
+        zip -r9 ../$ZIPNAME . -x .git README.md
+        echo "ZIPNAME=$ZIPNAME" >> $GITHUB_ENV
+
+    - name: 7. Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: S20Ultra-GoRhanHee-XongPhim-${{ github.run_id }}
-        path: ${{ github.workspace }}/android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
+        name: KernelSU-SuSFS-G988N-${{ github.run_id }}
+        path: |
+          ${{ env.ZIPNAME }}
+          android-kernel/build.log
+        retention-days: 7
+
+    - name: 8. Tạo GitHub Release
+      if: ${{ inputs.create_release == 'true' }}
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: susfs-build-${{ github.run_number }}
+        name: "KernelSU + SuSFS G988N - Build #${{ github.run_number }}"
+        files: ${{ env.ZIPNAME }}
+        body: |
+          ## KernelSU Next + SuSFS — SM-G988N
+          - **Kernel:** 4.19.113 Non-GKI (Snapdragon 865)
+          - **Source:** GoRhanHee kernel_samsung_sm8250
+          - **SuSFS:** Magic Mount + Sus Path + Sus Su
+          - **Build:** #${{ github.run_number }}
+
+          ### Flash
+          - TWRP → Install ZIP
+          - Odin → slot AP
