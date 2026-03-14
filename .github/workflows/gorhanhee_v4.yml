@@ -1,12 +1,17 @@
-name: Build KernelSU S20U (GoRhanHee Final Fix)
+name: Build KernelSU S20U (GoRhanHee Final)
 
 on:
   workflow_dispatch:
 
 env:
+  # Tắt cảnh báo vàng Node.js
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  
   KERNEL_SOURCE: https://github.com/GoRhanHee/kernel_samsung_sm8250
-  # Đã xóa đường dẫn vendor/, bắt make tự tìm file defconfig
-  KERNEL_DEFCONFIG: z3q_defconfig
+  
+  # Đã lắp đúng tên file cấu hình bạn vừa tìm được
+  KERNEL_DEFCONFIG: vendor/z3q_kor_singlex_defconfig
+  
   TARGET_ARCH: arm64
   KERNEL_FILE: Image
 
@@ -45,5 +50,5 @@ jobs:
     - name: Tải file Image lên Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: S20Ultra-GoRhanHee-Final-${{ github.run_id }}
+        name: S20Ultra-GoRhanHee-Success-${{ github.run_id }}
         path: android-kernel/out/arch/${{ env.TARGET_ARCH }}/boot/${{ env.KERNEL_FILE }}
